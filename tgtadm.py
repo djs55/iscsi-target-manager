@@ -23,29 +23,59 @@ def show():
     cmd = tgtadm + [ "--op", "show", "--mode", "target" ]
     lines = run(cmd)
     results = []
+    acl = []
 
     current = {}
+    lun = {}
+    reading_acl = False
 
     for line in lines:
         m = re.match('Target (\d+): (\S+)\n$', line)
         if m:
+            if current <> {}:
+                results.append(current)
+                current = {}
             current["tid"] = int(m.group(1))
             current["iqn"] = str(m.group(2))
+            current["luns"] = []
+            reading_acl = False
+
+        if reading_acl:
+            m = re.match('\s*(\S+)\n$', line)
+            if m:
+                current["acl"].append(str(m.group(1)))
+            else:
+                raise "Failed to parse ACL %s" % line
+            continue
 
         m = re.match('\s*LUN: (\d+)\n$', line)
         if m:
-            current["lun"] = int(m.group(1))
+            if lun <> {}:
+                current["luns"].append(lun)
+                lun = {}
+            lun["id"] = int(m.group(1))
         m = re.match('\s*SCSI ID: (\S+)\s+(\S+)\n$', line)
         if m:
-            current["scsi_vendor"] = str(m.group(1))
-            current["scsi_id"] = str(m.group(2))
+            lun["scsi_vendor"] = str(m.group(1))
+            lun["scsi_id"] = str(m.group(2))
         m = re.match('\s*SCSI SN: (\S+)\n$', line)
         if m:
-            current["scsi_sn"] = str(m.group(1))
+            lun["scsi_sn"] = str(m.group(1))
         m = re.match('\s*Backing store path: (\S+)\n$', line)
         if m:
-            current["path"] = str(m.group(1))
-            results.append(current)
+            lun["path"] = str(m.group(1))
+            if lun <> {}:
+                current["luns"].append(lun)
+                lun = {}
+
+        m = re.match('\s*ACL information:\n$', line)
+        if m:
+            reading_acl = True
+            current["acl"] = []
+
+    if current <> {}:
+        results.append(current)
+        current = {}
     return results
 
 def unique_tids(luns):
@@ -72,6 +102,16 @@ def remove_lun(tid, lun):
     global tgtadm
     cmd = tgtadm + [ "--op", "delete", "--mode", "logicalunit", "--tid", str(tid), "--lun", str(lun) ]
     run(cmd)    
+
+def add_initiator(tid, initiator='ALL'):
+    global tgtadm
+    cmd = tgtadm + [ "--op", "bind", "--mode", "target", "--tid", str(tid), "-I", initiator ]
+    run(cmd)
+
+def remove_initiator(tid, initiator='ALL'):
+    global tgtadm
+    cmd = tgtadm + [ "--op", "unbind", "--mode", "target", "--tid", str(tid), "-I", initiator ]
+    run(cmd)
 
 class PreRequisites(unittest.TestCase):
     def testOutput(self):
@@ -103,33 +143,50 @@ class TestLUNs(unittest.TestCase):
         """Check that creating a target with a single LUN works"""
         new(1, unique_iqn())
         add_lun(1, 1, self.dev)
-        luns = show()
-        lun = luns[0]
-        if lun["tid"] <> 1:
+        targets = show()
+        target = targets[0]
+        if target["tid"] <> 1:
             raise "tid: expected %d, got %d" % (str(1), str(lun["tid"]))
-        if lun["path"] <> self.dev:
-            raise "path: expected %s, got %s" % (dev, lun["path"])
+        for lun in target["luns"]:
+            if lun["id"] == 1:
+                if lun["path"] <> self.dev:
+                    raise "path: expected %s, got %s" % (self.dev, lun["path"])
     def testMany(self):
         """Check that creating a target with many LUNs works"""
         new(1, unique_iqn())
         lun_ids = range(1, 100)
         for lun_id in lun_ids:
             add_lun(1, lun_id, self.dev)
-        luns = show()
+        targets = show()
+        target = targets[0]
+        luns = target["luns"]
         self.failUnless(len(luns) == len(lun_ids) + 1)
-        for lun in show():
-            if lun["tid"] <> 1:
-                raise "tid: expected %d, got %d" % (str(1), str(lun["tid"]))
-            if lun["path"] <> self.dev:
-                raise "path: expected %s, got %s" % (dev, lun["path"])
+        for lun in luns:
+            if lun["id"] in lun_ids:
+                if lun["path"] <> self.dev:
+                    raise "path: expected %s, got %s" % (self.dev, lun["path"])
 
     def testReuse(self):
         """Check that the same LUN id can be re-used"""
         new(1, unique_iqn())
         add_lun(1, 1, self.dev)
-        self.failUnless(len(show()) == 2)
+        self.failUnless(len(show()[0]["luns"]) == 2)
         remove_lun(1, 1)
-        self.failUnless(len(show()) == 1)
+        self.failUnless(len(show()[0]["luns"]) == 1)
+
+    def testIP(self):
+        """Check that we can add/remove initiator IPs"""
+        new(1, unique_iqn())
+        add_lun(1, 1, self.dev)
+        self.failUnless(show()[0]["acl"] == [])
+        add_initiator(1) # ALL
+        self.failUnless(show()[0]["acl"] == [ "ALL" ])
+        remove_initiator(1) # AL
+        self.failUnless(show()[0]["acl"] == [])
+        add_initiator(1, "127.0.0.1")
+        self.failUnless(show()[0]["acl"] == [ "127.0.0.1" ])
+        remove_initiator(1, "127.0.0.1")
+        self.failUnless(show()[0]["acl"] == [])
 
     def tearDown(self):
         os.unlink(self.dev)
