@@ -1,0 +1,1 @@
+This provides a high-level iSCSI target interface, as a wrapper around tgtadm commands.
