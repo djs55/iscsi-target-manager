@@ -18,7 +18,25 @@ import unittest
 
 tgtadm = [ "/usr/sbin/tgtadm", "--lld", "iscsi" ]
 
-def show():
+def query_account():
+    global tgtadm
+    cmd = tgtadm + [ "--op", "show", "--mode", "account" ]
+    lines = run(cmd)
+    results = []
+
+    reading_accounts = False
+    for line in lines:
+        m = re.match('^Account list:\n$', line)
+        if m:
+            reading_accounts = True
+            continue
+        if reading_accounts:
+            m = re.match('^\s*(\S+)\n$',line)
+            if m:
+                results.append(m.group(1))
+    return set(results)
+
+def query_target():
     global tgtadm
     cmd = tgtadm + [ "--op", "show", "--mode", "target" ]
     lines = run(cmd)
@@ -113,10 +131,20 @@ def remove_initiator(tid, initiator='ALL'):
     cmd = tgtadm + [ "--op", "unbind", "--mode", "target", "--tid", str(tid), "-I", initiator ]
     run(cmd)
 
+def add_user(username, password):
+    global tgtadm
+    cmd = tgtadm + [ "--op", "new", "--mode", "account", "--user", username, "--password", password ]
+    run(cmd)
+
+def remove_user(username):
+    global tgtadm
+    cmd = tgtadm + [ "--op", "delete", "--mode", "account", "--user", username ]
+    run(cmd)
+
 class PreRequisites(unittest.TestCase):
     def testOutput(self):
-        """show() should always produce some output and not fail"""
-        show ()
+        """query_target() should always produce some output and not fail"""
+        query_target ()
 
 iqn_counter = 1
 def unique_iqn():
@@ -137,13 +165,15 @@ def make_sparse_file(size="1M"):
 class TestLUNs(unittest.TestCase):
     def setUp(self):
         self.dev = make_sparse_file()
-        for tid in unique_tids(show()):
+        for tid in unique_tids(query_target()):
             delete(tid)
+        for user in query_account():
+            remove_user(user)
     def testOne(self):
         """Check that creating a target with a single LUN works"""
         new(1, unique_iqn())
         add_lun(1, 1, self.dev)
-        targets = show()
+        targets = query_target()
         target = targets[0]
         if target["tid"] <> 1:
             raise "tid: expected %d, got %d" % (str(1), str(lun["tid"]))
@@ -157,7 +187,7 @@ class TestLUNs(unittest.TestCase):
         lun_ids = range(1, 100)
         for lun_id in lun_ids:
             add_lun(1, lun_id, self.dev)
-        targets = show()
+        targets = query_target()
         target = targets[0]
         luns = target["luns"]
         self.failUnless(len(luns) == len(lun_ids) + 1)
@@ -170,29 +200,41 @@ class TestLUNs(unittest.TestCase):
         """Check that the same LUN id can be re-used"""
         new(1, unique_iqn())
         add_lun(1, 1, self.dev)
-        self.failUnless(len(show()[0]["luns"]) == 2)
+        self.failUnless(len(query_target()[0]["luns"]) == 2)
         remove_lun(1, 1)
-        self.failUnless(len(show()[0]["luns"]) == 1)
+        self.failUnless(len(query_target()[0]["luns"]) == 1)
 
     def testIP(self):
         """Check that we can add/remove initiator IPs"""
         new(1, unique_iqn())
         add_lun(1, 1, self.dev)
-        self.failUnless(show()[0]["acl"] == [])
+        self.failUnless(query_target()[0]["acl"] == [])
         add_initiator(1) # ALL
-        self.failUnless(show()[0]["acl"] == [ "ALL" ])
+        self.failUnless(query_target()[0]["acl"] == [ "ALL" ])
         remove_initiator(1) # AL
-        self.failUnless(show()[0]["acl"] == [])
+        self.failUnless(query_target()[0]["acl"] == [])
         add_initiator(1, "127.0.0.1")
-        self.failUnless(show()[0]["acl"] == [ "127.0.0.1" ])
+        self.failUnless(query_target()[0]["acl"] == [ "127.0.0.1" ])
         remove_initiator(1, "127.0.0.1")
-        self.failUnless(show()[0]["acl"] == [])
+        self.failUnless(query_target()[0]["acl"] == [])
+
+    def testUser(self):
+        """Check that we can add/remove users"""
+        new(1, unique_iqn())
+        add_user("root", "password")
+        users = query_account()
+        self.failUnless(users == set([ "root" ]))
+        add_user("root2", "password")
+        users = query_account()
+        self.failUnless(users == set([ "root", "root2" ]))
+        remove_user("root")
 
     def tearDown(self):
         os.unlink(self.dev)
-        for tid in unique_tids(show()):
+        for tid in unique_tids(query_target()):
             delete(tid)
-        
+        for user in query_account():
+            remove_user(user)
 
 
 if __name__ == "__main__":
