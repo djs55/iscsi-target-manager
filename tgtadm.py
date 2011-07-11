@@ -69,7 +69,9 @@ def add_lun(tid, lun, device):
     run(cmd)
 
 def remove_lun(tid, lun):
-    pass
+    global tgtadm
+    cmd = tgtadm + [ "--op", "delete", "--mode", "logicalunit", "--tid", str(tid), "--lun", str(lun) ]
+    run(cmd)    
 
 class PreRequisites(unittest.TestCase):
     def testOutput(self):
