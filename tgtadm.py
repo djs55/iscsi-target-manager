@@ -46,6 +46,7 @@ def query_target():
     current = {}
     lun = {}
     reading_acl = False
+    reading_account = False
 
     for line in lines:
         m = re.match('Target (\d+): (\S+)\n$', line)
@@ -57,14 +58,17 @@ def query_target():
             current["iqn"] = str(m.group(2))
             current["luns"] = []
             reading_acl = False
+            reading_account = False
 
         if reading_acl:
             m = re.match('\s*(\S+)\n$', line)
             if m:
                 current["acl"].append(str(m.group(1)))
-            else:
-                raise "Failed to parse ACL %s" % line
-            continue
+
+        if reading_account:
+            m = re.match('\s*(\S+)\n$', line)
+            if m:
+                current["accounts"].append(str(m.group(1)))
 
         m = re.match('\s*LUN: (\d+)\n$', line)
         if m:
@@ -85,6 +89,11 @@ def query_target():
             if lun <> {}:
                 current["luns"].append(lun)
                 lun = {}
+
+        m = re.match('\s*Account information:\n$', line)
+        if m:
+            reading_account = True
+            current["accounts"] = []
 
         m = re.match('\s*ACL information:\n$', line)
         if m:
@@ -140,6 +149,18 @@ def remove_user(username):
     global tgtadm
     cmd = tgtadm + [ "--op", "delete", "--mode", "account", "--user", username ]
     run(cmd)
+
+def bind_user(tid, username):
+    global tgtadm
+    cmd = tgtadm + [ "--op", "bind", "--mode", "account", "--tid", str(tid), "--user", username ]
+    run(cmd)
+
+def unbind_user(tid, username):
+    global tgtadm
+    cmd = tgtadm + [ "--op", "unbind", "--mode", "account", "--tid", str(tid), "--user", username ]
+    run(cmd)
+
+
 
 class PreRequisites(unittest.TestCase):
     def testOutput(self):
@@ -228,6 +249,17 @@ class TestLUNs(unittest.TestCase):
         users = query_account()
         self.failUnless(users == set([ "root", "root2" ]))
         remove_user("root")
+
+    def testUserBind(self):
+        """Check that we can bind users to targets for CHAP auth"""
+        new(1, unique_iqn())
+        add_user("root", "password")
+        bind_user(1, "root")
+        accounts = query_target()[0]["accounts"]
+        self.failUnless(accounts == [ "root" ])
+        unbind_user(1, "root")
+        accounts = query_target()[0]["accounts"]
+        self.failUnless(accounts == [])
 
     def tearDown(self):
         os.unlink(self.dev)
