@@ -1,0 +1,16 @@
+--- /root/LVMoISCSISR	2011-07-12 17:21:39.000000000 +0100
++++ LVMoISCSISR	2011-07-12 17:33:19.000000000 +0100
+@@ -71,6 +71,13 @@
+             # This is a probe call, generate a temp sr_uuid
+             sr_uuid = util.gen_uuid()
+ 
++	    # Dave's new probe interface
++	    import iscsi
++	    target = self.dconf['target']
++	    iqn = self.dconf['targetIQN']
++	    print >>sys.stderr, iscsi.probe(target, iqn)
++	    raise "foo"
++
+         driver = SR.driver('iscsi')
+         if self.original_srcmd.dconf.has_key('target'):
+             self.original_srcmd.dconf['targetlist'] = self.original_srcmd.dconf['target']
