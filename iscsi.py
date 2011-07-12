@@ -33,7 +33,8 @@ def page83(ip, iqn, lun):
     lines = run(iscsi_inq + [ "-e", "1", "-c", "131", "iscsi://%s/%s/%d" % (ip, iqn, lun) ])
     for line in lines:
         m = re.match('^Designator:\[(.+)\]\n$', line)
-        return m.group(1)
+        if m:
+            return m.group(1)
     return None
 
 # return the Vendor
@@ -76,4 +77,29 @@ def list(ip):
         results[current_target] = current_luns
     return results
 
+import xml.dom.minidom
+def probe(ip, iqn):
+    all = list(ip)
+    luns = all[iqn]
+
+    dom = xml.dom.minidom.Document()
+    element = dom.createElement("iscsi-target")
+    dom.appendChild(element)
+    for (lun, size) in luns:
+        entry = dom.createElement('LUN')
+        element.appendChild(entry)
+        attrs = {
+            "vendor": vendor(ip, iqn, lun),
+            "serial": page80(ip, iqn, lun),
+            "LUNid": str(lun),
+            "size": str(size),
+            "SCSIid": page83(ip, iqn, lun)
+            }
+        for key in attrs.keys():
+            subentry = dom.createElement(key)
+            entry.appendChild(subentry)           
+            textnode = dom.createTextNode(attrs[key])
+            subentry.appendChild(textnode)
+
+    return dom.toprettyxml()
     
